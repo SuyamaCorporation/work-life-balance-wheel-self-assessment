@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ワークライフバランスホイール自己評価ツール</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-indigo-950 text-indigo-100 min-h-screen">
+<div class="max-w-4xl mx-auto p-4">
+  <h1 class="text-2xl font-bold text-center text-indigo-300 mb-1">ワークライフバランスホイール</h1>
+  <p class="text-center text-indigo-500 mb-5 text-sm">8領域の満足度をレーダーチャートで可視化・改善目標設定</p>
+
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+    <!-- Radar Chart -->
+    <div class="bg-indigo-900/40 rounded-xl p-4 flex flex-col items-center">
+      <canvas id="radar" width="300" height="300"></canvas>
+      <div class="mt-2 flex gap-3 text-xs">
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-indigo-400"></span>現在</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-green-400"></span>3ヶ月前</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-3 h-3 rounded-full bg-yellow-400"></span>目標</span>
+      </div>
+      <div id="overall-score" class="mt-3 text-center">
+        <div class="text-3xl font-bold text-indigo-300" id="avg-score">-</div>
+        <div class="text-xs text-indigo-500">平均満足度</div>
+      </div>
+    </div>
+
+    <!-- Sliders -->
+    <div class="space-y-2">
+      <div id="sliders"></div>
+      <div class="flex gap-2 mt-3">
+        <button onclick="saveData()" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-sm font-semibold" aria-label="保存する">💾 保存</button>
+        <button onclick="loadPrev()" class="flex-1 bg-indigo-800 hover:bg-indigo-700 text-indigo-200 py-2 rounded-lg text-sm" aria-label="3ヶ月前を読み込む">📅 3ヶ月前を読込</button>
+        <button onclick="clearAll()" class="bg-red-900/50 hover:bg-red-900 text-red-300 py-2 px-3 rounded-lg text-sm" aria-label="リセット">🗑️</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Goal Setting -->
+  <div class="mt-6 bg-indigo-900/40 rounded-xl p-4">
+    <h2 class="text-sm font-semibold text-indigo-200 mb-3">🎯 改善目標設定</h2>
+    <div id="goals-panel" class="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3"></div>
+    <button onclick="saveGoals()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-1.5 rounded-lg text-sm" aria-label="目標を保存">目標を保存</button>
+  </div>
+
+  <!-- History -->
+  <div id="history-panel" class="mt-4 bg-indigo-900/40 rounded-xl p-4 hidden">
+    <h2 class="text-sm font-semibold text-indigo-200 mb-2">📊 保存履歴</h2>
+    <div id="history-list" class="text-xs text-indigo-400 space-y-1"></div>
+  </div>
+</div>
+
+<script>
+const areas = [
+  { key:'work', label:'仕事・キャリア', emoji:'💼', color:'#818cf8' },
+  { key:'health', label:'健康・体力', emoji:'💪', color:'#34d399' },
+  { key:'family', label:'家族・パートナー', emoji:'👨‍👩‍👧', color:'#f472b6' },
+  { key:'friends', label:'友人・社交', emoji:'👥', color:'#fbbf24' },
+  { key:'growth', label:'自己成長・学習', emoji:'📚', color:'#60a5fa' },
+  { key:'finance', label:'お金・財務', emoji:'💰', color:'#a3e635' },
+  { key:'hobby', label:'趣味・余暇', emoji:'🎨', color:'#f97316' },
+  { key:'mindset', label:'心の安定・精神', emoji:'🧘', color:'#c084fc' },
+];
+
+let scores = {};
+let prev = {};
+let goals = {};
+let targets = {};
+
+function initScores() {
+  areas.forEach(a => {
+    scores[a.key] = scores[a.key] || 5;
+    targets[a.key] = targets[a.key] || 7;
+  });
+}
+
+function renderSliders() {
+  const el = document.getElementById('sliders');
+  el.innerHTML = areas.map(a => `
+    <div class="flex items-center gap-2 mb-1">
+      <span class="text-base w-6">${a.emoji}</span>
+      <span class="text-xs w-24 text-indigo-300">${a.label}</span>
+      <input type="range" min="1" max="10" value="${scores[a.key]||5}" step="1"
+        class="flex-1 h-2 accent-indigo-400"
+        oninput="updateScore('${a.key}', this.value)"
+        aria-label="${a.label}の満足度">
+      <span id="score-${a.key}" class="text-sm font-mono font-bold w-6 text-right" style="color:${a.color}">${scores[a.key]||5}</span>
+    </div>
+  `).join('');
+}
+
+function renderGoals() {
+  const el = document.getElementById('goals-panel');
+  el.innerHTML = areas.map(a => `
+    <div class="flex items-center gap-2">
+      <span class="text-sm">${a.emoji}</span>
+      <span class="text-xs text-indigo-400 w-24">${a.label}</span>
+      <input type="number" min="1" max="10" value="${targets[a.key]||7}"
+        class="w-12 bg-indigo-900 border border-indigo-700 rounded px-2 py-0.5 text-xs text-white text-center"
+        oninput="targets['${a.key}']=parseInt(this.value)||7; drawRadar();"
+        aria-label="${a.label}の目標">
+      <input type="text" placeholder="改善のアクション..." value="${goals[a.key]||''}"
+        class="flex-1 bg-indigo-900 border border-indigo-700 rounded px-2 py-0.5 text-xs text-white"
+        oninput="goals['${a.key}']=this.value" aria-label="${a.label}の改善アクション">
+    </div>
+  `).join('');
+}
+
+function updateScore(key, val) {
+  scores[key] = parseInt(val);
+  document.getElementById('score-' + key).textContent = val;
+  drawRadar();
+  updateAvg();
+}
+
+function updateAvg() {
+  const avg = (Object.values(scores).reduce((a,b)=>a+b,0) / areas.length).toFixed(1);
+  document.getElementById('avg-score').textContent = avg + '/10';
+}
+
+function drawRadar() {
+  const canvas = document.getElementById('radar');
+  const ctx = canvas.getContext('2d');
+  const W = 300, H = 300, cx = 150, cy = 150, r = 110;
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#1e1b4b'; ctx.fillRect(0,0,W,H);
+
+  const n = areas.length;
+  const angle = (i) => (i * 2 * Math.PI / n) - Math.PI / 2;
+
+  // Grid
+  for (let g=1;g<=10;g++) {
+    ctx.strokeStyle = g===5?'#312e81':'#1e1b4b';
+    ctx.lineWidth = g===5?1.5:0.5;
+    ctx.beginPath();
+    areas.forEach((a, i) => {
+      const x = cx + (r * g/10) * Math.cos(angle(i));
+      const y = cy + (r * g/10) * Math.sin(angle(i));
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.closePath(); ctx.stroke();
+  }
+
+  // Spokes & labels
+  areas.forEach((a, i) => {
+    const x = cx + r * Math.cos(angle(i));
+    const y = cy + r * Math.sin(angle(i));
+    ctx.strokeStyle = '#312e81'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.lineTo(x,y); ctx.stroke();
+    // Label
+    const lx = cx + (r+22) * Math.cos(angle(i));
+    const ly = cy + (r+22) * Math.sin(angle(i));
+    ctx.fillStyle = a.color; ctx.font = '10px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(a.emoji, lx, ly+3);
+  });
+
+  // Draw polygon helper
+  const drawPoly = (vals, color, alpha) => {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath();
+    areas.forEach((a, i) => {
+      const v = vals[i] / 10;
+      const x = cx + r * v * Math.cos(angle(i));
+      const y = cy + r * v * Math.sin(angle(i));
+      if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    });
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.globalAlpha = 1;
+  };
+
+  // Previous (green)
+  if (Object.keys(prev).length) {
+    drawPoly(areas.map(a => prev[a.key]||0), '#34d399', 0.15);
+  }
+  // Target (yellow)
+  drawPoly(areas.map(a => targets[a.key]||7), '#fbbf24', 0.1);
+  // Current (indigo)
+  drawPoly(areas.map(a => scores[a.key]||5), '#818cf8', 0.4);
+
+  // Dots
+  areas.forEach((a, i) => {
+    const v = (scores[a.key]||5) / 10;
+    const x = cx + r * v * Math.cos(angle(i));
+    const y = cy + r * v * Math.sin(angle(i));
+    ctx.fillStyle = a.color; ctx.beginPath(); ctx.arc(x,y,4,0,2*Math.PI); ctx.fill();
+  });
+}
+
+function saveData() {
+  const key = new Date().toISOString().split('T')[0];
+  const history = JSON.parse(localStorage.getItem('wlb-history')||'{}');
+  history[key] = { ...scores };
+  localStorage.setItem('wlb-history', JSON.stringify(history));
+  localStorage.setItem('wlb-current', JSON.stringify(scores));
+  renderHistory();
+  alert('保存しました！');
+}
+
+function loadPrev() {
+  const history = JSON.parse(localStorage.getItem('wlb-history')||'{}');
+  const keys = Object.keys(history).sort();
+  if (keys.length < 2) {
+    const sample = {};
+    areas.forEach(a => sample[a.key] = Math.floor(Math.random()*4)+3);
+    prev = sample;
+  } else {
+    prev = history[keys[keys.length - 2]];
+  }
+  drawRadar();
+}
+
+function saveGoals() {
+  localStorage.setItem('wlb-goals', JSON.stringify(goals));
+  localStorage.setItem('wlb-targets', JSON.stringify(targets));
+  alert('目標を保存しました！');
+}
+
+function clearAll() {
+  if (!confirm('全データをリセットしますか？')) return;
+  localStorage.removeItem('wlb-history');
+  localStorage.removeItem('wlb-current');
+  areas.forEach(a => scores[a.key] = 5);
+  renderSliders();
+  drawRadar();
+  updateAvg();
+}
+
+function renderHistory() {
+  const history = JSON.parse(localStorage.getItem('wlb-history')||'{}');
+  const keys = Object.keys(history).sort().reverse().slice(0,5);
+  if (keys.length === 0) return;
+  document.getElementById('history-panel').classList.remove('hidden');
+  document.getElementById('history-list').innerHTML = keys.map(k => {
+    const avg = (Object.values(history[k]).reduce((a,b)=>a+b,0)/8).toFixed(1);
+    return `<div class="flex justify-between"><span>${k}</span><span>平均 ${avg}/10</span></div>`;
+  }).join('');
+}
+
+// Init
+const saved = JSON.parse(localStorage.getItem('wlb-current')||'null');
+if (saved) scores = saved;
+const savedTargets = JSON.parse(localStorage.getItem('wlb-targets')||'null');
+if (savedTargets) targets = savedTargets;
+const savedGoals = JSON.parse(localStorage.getItem('wlb-goals')||'null');
+if (savedGoals) goals = savedGoals;
+
+initScores();
+renderSliders();
+renderGoals();
+drawRadar();
+updateAvg();
+renderHistory();
+</script>
+</body>
+</html>
